@@ -1,3 +1,9 @@
+libgrokj2k (7.6.6-1) unstable; urgency=high
+
+    * Fix severe bug in encoder
+
+ -- Aaron Boxer <boxerab@gmail.com>  Tue, 2 Feb 2021 11:10:00 +0200
+
 libgrokj2k (7.6.5-1) unstable; urgency=medium
 
     * Maintenance bug release
