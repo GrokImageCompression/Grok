@@ -1,3 +1,9 @@
+libgrokj2k (8.0.0-1) unstable; urgency=medium
+
+    * Majour release
+
+ -- Aaron Boxer <boxerab@gmail.com>  Sat, 6 Feb 2021 11:10:00 +0200
+
 libgrokj2k (7.6.6-1) unstable; urgency=high
 
     * Fix severe bug in encoder
