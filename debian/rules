@@ -6,6 +6,10 @@ DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 # as per upstream request:
 export DEB_CXXFLAGS_MAINT_APPEND = -fvisibility=hidden
 
+ifneq (,$(filter $(DEB_HOST_ARCH), armel m68k mips mipsel powerpc sh4))
+  export DEB_LDFLAGS_MAINT_APPEND += -Wl,--no-as-needed -latomic -Wl,--as-needed
+endif
+
 %:
 	dh $@
 
@@ -18,6 +22,7 @@ CMAKE_EXTRA_FLAGS += -DCMAKE_SKIP_RPATH=ON \
   -DBUILD_TESTING:BOOL=OFF \
   -DBUILD_DOC:BOOL=ON \
   -DBUILD_THIRDPARTY:BOOL=OFF \
+  -DAVX2_FOUND:BOOL=OFF \
   -DGRK_USE_LIBJPEG:BOOL=ON
 
 override_dh_auto_configure:

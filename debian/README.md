@@ -9,13 +9,14 @@ Move master tag:
 
 Move debian/master tag:
 
-`$ git push origin :refs/tags/v7.6.6.debian && git tag -fa v7.6.6.debian && git push origin debian/master --tags`
+`$ git push origin :refs/tags/v7.6.6.debian && git tag -fa v7.6.6.debian && git push origin master --tags`
 
 ------------------
 Building a Package
 ------------------
 
 Guide to [setting up schroot](https://wiki.debian.org/Packaging/Pre-Requisites)
+
 `$ apt install git sbuild cmake  devscripts build-essential debhelper help2man liblcms2-dev libpng-dev libzstd-dev libtiff-dev libjpeg-dev zlib1g-dev doxygen lintian libimage-exiftool-perl`
 
 0. `cd $SOURCE_DIR`
@@ -52,7 +53,7 @@ https://www.linuxbabe.com/security/a-practical-guide-to-gpg-part-1-generate-your
 
 2. sign .changes file
 
-`$ debsign -k CA02AD91A2CD5E4875BFE20292D3B561135ECB52 ../*.changes`
+`$ debsign -k 192BD5A42B65A8A1D5B4C364A9B1F9F72B4BB231 ../*.changes`
 
 3. dupload changes file
 
