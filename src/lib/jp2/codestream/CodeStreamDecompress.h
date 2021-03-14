@@ -93,7 +93,7 @@ protected:
 private:
 	bool read_short(uint16_t *val);
 	bool process_marker(const marker_handler* marker_handler, uint16_t marker_size);
-	bool parse_tile_header_markers(bool *can_decode_tile_data);
+	bool parseTileHeaderMarkers(bool *can_decode_tile_data);
 	bool readHeaderProcedureImpl(void);
 	bool exec_decompress();
 	bool decompress_tile_t2t1(TileProcessor *tileProcessor) ;

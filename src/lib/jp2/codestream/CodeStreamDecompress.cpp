@@ -434,26 +434,28 @@ bool CodeStreamDecompress::decompressTile(uint16_t tile_index){
 }
 ///////////////////////////////////////////////////////////////////////////////////////
 bool CodeStreamDecompress::decompressTiles(void) {
-	bool go_on = true;
 	uint16_t numTilesToDecompress = (uint16_t)(m_cp.t_grid_height* m_cp.t_grid_width);
 	m_multiTile = numTilesToDecompress > 1;
-	std::atomic<bool> success(true);
-	std::atomic<uint32_t> numTilesDecompressed(0);
-	ThreadPool pool(std::min<uint32_t>((uint32_t)ThreadPool::get()->num_threads(), numTilesToDecompress));
-	std::vector< std::future<int> > results;
-
 	if (cstr_index) {
 		if (!allocate_tile_element_cstr_index()) {
 			m_headerError = true;
 			return false;
 		}
 	}
-
 	// parse header and perform T2 followed by asynch T1
-	for (uint16_t tileno = 0; tileno < numTilesToDecompress; tileno++) {
+	bool canDecode = true;
+	std::vector< std::future<int> > results;
+	std::atomic<bool> success(true);
+	std::atomic<uint32_t> numTilesDecompressed(0);
+	ThreadPool pool(std::min<uint32_t>((uint32_t)ThreadPool::get()->num_threads(), numTilesToDecompress));
+	bool breakAfterT1 = false;
+	while (m_decompressorState.getState() != J2K_DEC_STATE_EOC &&
+			m_decompressorState.getState() != J2K_DEC_STATE_NO_EOC &&
+				m_stream->get_number_byte_left() > 0 &&
+				!breakAfterT1) {
 		//1. read header
 		try {
-			if (!parse_tile_header_markers(&go_on)){
+			if (!parseTileHeaderMarkers(&canDecode)){
 				success = false;
 				goto cleanup;
 			}
@@ -462,17 +464,16 @@ bool CodeStreamDecompress::decompressTiles(void) {
 			success = false;
 			goto cleanup;
 		}
-		if (!go_on)
-			break;
+		if (!canDecode)
+			continue;
 		if (!m_tileProcessor){
-			GRK_ERROR("Missing SOT marker in tile %d", tileno);
+			GRK_ERROR("Missing SOT marker");
 			success = false;
 			goto cleanup;
 		}
 		//2. find next tile
 		auto processor = m_tileProcessor;
 		m_tileProcessor = nullptr;
-		bool breakAfterT1 = false;
 		try {
 			if (!findNextTile(processor)){
 					GRK_ERROR("Failed to decompress tile %u/%u",
@@ -484,7 +485,7 @@ bool CodeStreamDecompress::decompressTiles(void) {
 		}  catch (DecodeUnknownMarkerAtEndOfTileException &e){
 			breakAfterT1 = true;
 		}
-		//3. T2 decompress
+		//3. T2 + T1 decompress
 		// once we schedule a processor for T1 compression, we will destroy it
 		// regardless of success or not
 		if (pool.num_threads() > 1) {
@@ -515,10 +516,6 @@ bool CodeStreamDecompress::decompressTiles(void) {
 			if (!success)
 				goto cleanup;
 		}
-		if (breakAfterT1)
-			break;
-		if (m_stream->get_number_byte_left() == 0|| m_decompressorState.getState() == J2K_DEC_STATE_NO_EOC)
-			break;
 	}
 	for(auto &result: results){
 		result.get();
@@ -895,7 +892,7 @@ bool CodeStreamDecompress::decompressTile() {
 
 		bool go_on = true;
 		try {
-			if (!parse_tile_header_markers(&go_on))
+			if (!parseTileHeaderMarkers(&go_on))
 				goto cleanup;
 		} catch (InvalidMarkerException &ime){
 			GRK_ERROR("Found invalid marker : 0x%x", ime.m_marker);
@@ -1928,7 +1925,6 @@ bool CodeStreamDecompress::read_mct( uint8_t *p_header_data,	uint16_t header_siz
 		GRK_ERROR("Error reading MCT marker");
 		return false;
 	}
-
 	/* first marker */
 	/* Zmct */
 	grk_read<uint32_t>(p_header_data, &tmp, 2);
@@ -1999,17 +1995,14 @@ bool CodeStreamDecompress::read_mct( uint8_t *p_header_data,	uint16_t header_siz
 		mct_data = tcp->m_mct_records + tcp->m_nb_mct_records;
 		newmct = true;
 	}
-
 	if (mct_data->m_data) {
 		grk_free(mct_data->m_data);
 		mct_data->m_data = nullptr;
 		mct_data->m_data_size = 0;
 	}
-
 	mct_data->m_index = indix;
 	mct_data->m_array_type = (J2K_MCT_ARRAY_TYPE) ((tmp >> 8) & 3);
 	mct_data->m_element_type = (J2K_MCT_ELEMENT_TYPE) ((tmp >> 10) & 3);
-
 	/* Ymct */
 	grk_read<uint32_t>(p_header_data, &tmp, 2);
 	p_header_data += 2;
@@ -2035,7 +2028,6 @@ bool CodeStreamDecompress::read_mct( uint8_t *p_header_data,	uint16_t header_siz
 
 	return true;
 }
-
 bool CodeStreamDecompress::read_unk(uint16_t *output_marker) {
 	const marker_handler *marker_handler = nullptr;
 	uint32_t size_unk = 2;
@@ -2075,7 +2067,7 @@ bool CodeStreamDecompress::read_unk(uint16_t *output_marker) {
 bool CodeStreamDecompress::endDecompress(void){
 	return true;
 }
-bool CodeStreamDecompress::parse_tile_header_markers(bool *can_decode_tile_data) {
+bool CodeStreamDecompress::parseTileHeaderMarkers(bool *canDecode) {
 	if (m_decompressorState.getState() == J2K_DEC_STATE_EOC) {
 		m_curr_marker = J2K_MS_EOC;
 		return true;
@@ -2085,11 +2077,9 @@ bool CodeStreamDecompress::parse_tile_header_markers(bool *can_decode_tile_data)
 		GRK_ERROR("parse_markers: no SOT marker found");
 		return false;
 	}
-
 	/* Seek in code stream for SOT marker specifying desired tile index.
 	 * If we don't find it, we stop when we read the EOC or run out of data */
 	while (!m_decompressorState.last_tile_part_was_read && (m_curr_marker != J2K_MS_EOC)) {
-
 		/* read markers until SOD is detected */
 		while (m_curr_marker != J2K_MS_SOD) {
 			// end of stream with no EOC
@@ -2108,13 +2098,11 @@ bool CodeStreamDecompress::parse_tile_header_markers(bool *can_decode_tile_data)
 				GRK_ERROR("Zero-size marker in header.");
 				return false;
 			}
-
 			// subtract tile part header and header marker size
 			if (m_decompressorState.getState() & J2K_DEC_STATE_TPH)
 				m_tileProcessor->tile_part_data_length -= (uint32_t)(marker_size + 2);
 
 			marker_size = (uint16_t)(marker_size - 2); /* Subtract the size of the marker ID already read */
-
 			auto marker_handler = get_marker_handler(m_curr_marker);
 			if (!marker_handler) {
 				GRK_ERROR("Unknown marker encountered while seeking SOT marker");
@@ -2126,8 +2114,6 @@ bool CodeStreamDecompress::parse_tile_header_markers(bool *can_decode_tile_data)
 			}
 			if (!process_marker(marker_handler, marker_size))
 				return false;
-
-
 			/* Add the marker to the code stream index*/
 			if (cstr_index) {
 				if (!TileLengthMarkers::addToIndex(m_tileProcessor->m_tile_index, cstr_index,
@@ -2153,11 +2139,9 @@ bool CodeStreamDecompress::parse_tile_header_markers(bool *can_decode_tile_data)
 			if (!readMarker())
 				return false;
 		}
-
 		// no bytes left and no EOC marker : we're done!
 		if (!m_stream->get_number_byte_left() && m_decompressorState.getState() == J2K_DEC_STATE_NO_EOC)
 			break;
-
 		/* If we didn't skip data before, we need to read the SOD marker*/
 		if (!m_decompressorState.m_skip_tile_data) {
 			if (!m_tileProcessor->prepare_sod_decoding(this))
@@ -2179,12 +2163,10 @@ bool CodeStreamDecompress::parse_tile_header_markers(bool *can_decode_tile_data)
 			m_decompressorState.setState(J2K_DEC_STATE_TPH_SOT);
 		}
 	}
-
 	if (!m_tileProcessor) {
 		GRK_ERROR("Missing SOT marker");
 		return false;
 	}
-
 	// ensure lossy wavelet has quantization set
 	auto tcp = get_current_decode_tcp();
 	auto numComps = m_headerImage->numcomps;
@@ -2265,13 +2247,12 @@ bool CodeStreamDecompress::parse_tile_header_markers(bool *can_decode_tile_data)
 	/* Current marker is the EOC marker ?*/
 	if (m_curr_marker == J2K_MS_EOC && m_decompressorState.getState() != J2K_DEC_STATE_EOC)
 		m_decompressorState.setState( J2K_DEC_STATE_EOC);
-
 	//if we are not ready to decompress tile part data,
     // then skip tiles with no tile data i.e. no SOD marker
 	if (!m_decompressorState.last_tile_part_was_read) {
 		tcp = m_cp.tcps + m_tileProcessor->m_tile_index;
 		if (!tcp->m_tile_data){
-			*can_decode_tile_data = false;
+			*canDecode = false;
 			return true;
 		}
 	}
@@ -2284,7 +2265,7 @@ bool CodeStreamDecompress::parse_tile_header_markers(bool *can_decode_tile_data)
 				m_tileProcessor->m_tile_index);
 		return false;
 	}
-	*can_decode_tile_data = true;
+	*canDecode = true;
 	m_decompressorState.orState(J2K_DEC_STATE_DATA);
 
 	return true;
